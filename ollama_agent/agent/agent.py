@@ -159,8 +159,17 @@ class OllamaAgent:
             "subagents": [srv.subagent for srv in self._mcp_servers],
             # LocalShellBackend extends FilesystemBackend with an `execute` tool
             # that runs shell commands directly on the host.
+            #
+            # virtual_mode=True ensures the backend returns POSIX virtual paths
+            # (e.g. /Users/.../skills/) from ls_info(), which is required by
+            # deepagents' SkillsMiddleware (uses PurePosixPath internally and
+            # cannot parse Windows backslash paths).  root_dir is set to the
+            # filesystem root so that all absolute paths on the current drive
+            # remain accessible through the virtual→native path translation.
             "backend": LocalShellBackend(
-                root_dir=Path.cwd(), timeout=int(get_tool_timeout()), virtual_mode=False
+                root_dir=Path("/").resolve(),
+                timeout=int(get_tool_timeout()),
+                virtual_mode=True,
             ),
             "middleware": [stream_tool_events_mw],
         }

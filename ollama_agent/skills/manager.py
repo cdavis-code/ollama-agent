@@ -160,6 +160,11 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
     # Helpers for resolving skill directories to pass to create_deep_agent
     # ------------------------------------------------------------------
 
+    #: Virtual-path root for skills.  Must match the backend's root_dir
+    #: (LocalShellBackend in agent.py).  Path("/").resolve() gives "/" on
+    #: POSIX and the current-drive root (e.g. "C:\\") on Windows.
+    _SKILLS_VIRTUAL_ROOT: Path = Path("/").resolve()
+
     @staticmethod
     def collect_skills_dirs(
         *,
@@ -172,13 +177,36 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
         DeepAgents uses *last wins* for skills with the same name, so later
         entries override earlier ones.
 
-        Paths are normalized to POSIX (forward-slash) form because
+        Paths are returned as virtual POSIX paths (leading ``/``, forward
+        slashes) relative to the filesystem root.  This is required because
         ``deepagents``' ``SkillsMiddleware`` uses ``PurePosixPath``
-        internally, which cannot parse Windows backslash paths.
+        internally, which cannot parse Windows backslash paths or drive
+        letters.  The backend (``LocalShellBackend`` with
+        ``virtual_mode=True``) translates these virtual paths back to
+        native paths at access time.
         """
+        root = SkillManager._SKILLS_VIRTUAL_ROOT
         candidates: list[Path] = [
             SKILLS_DIR,
             Path.cwd() / project_dir,
             *(Path(p) for p in extra),
         ]
-        return [p.resolve().as_posix() for p in candidates if p.is_dir()]
+        result: list[str] = []
+        for p in candidates:
+            if not p.is_dir():
+                continue
+            resolved = p.resolve()
+            try:
+                result.append("/" + resolved.relative_to(root).as_posix())
+            except ValueError:
+                # Path is outside the virtual root (e.g. different drive on
+                # Windows).  Fall back to the absolute POSIX path — it may
+                # still work if the backend reaches it.
+                logger.debug(
+                    "Skill dir %s is outside virtual root %s; "
+                    "using absolute POSIX path",
+                    resolved,
+                    root,
+                )
+                result.append(resolved.as_posix())
+        return result
