@@ -166,10 +166,16 @@ class OllamaAgent:
             # cannot parse Windows backslash paths).  root_dir is set to the
             # filesystem root so that all absolute paths on the current drive
             # remain accessible through the virtual→native path translation.
+            #
+            # inherit_env=True copies the parent process's environment (PATH,
+            # HOME, etc.) so that tools like node, npm, git, python, etc. are
+            # available in the agent's shell.  Without this, commands run with
+            # an empty environment and nothing is on PATH.
             "backend": LocalShellBackend(
                 root_dir=Path("/").resolve(),
                 timeout=int(get_tool_timeout()),
                 virtual_mode=True,
+                inherit_env=True,
             ),
             "middleware": [stream_tool_events_mw],
         }
