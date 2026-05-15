@@ -80,6 +80,7 @@ The REPL provides a persistent chat session. You can use slash commands to manag
 - `/tasks`: List saved tasks.
 - `/task-run <id>`: Run a specific task.
 - `/task-delete <id>`: Delete a specific task.
+- `/task-create <id>`: Create a task interactively.
 - `/rag`: Show current RAG database status.
 - `/rag-list`: List available RAG databases.
 - `/rag-create <name>`: Create a new RAG database.
@@ -92,6 +93,8 @@ The REPL provides a persistent chat session. You can use slash commands to manag
 - `/skill-show <id>`: Show skill details.
 - `/skill-create <id>`: Create a skill interactively.
 - `/skill-delete <id>`: Delete a skill.
+- `/mcps`: List MCP server connection status and tool counts.
+- `/mcps <name>`: Show tools available on a specific MCP server.
 - `/exit`: Quit the application.
 
 ### Non-Interactive Mode
@@ -152,6 +155,7 @@ ollama-agent -t 60 -p "Run a long-running task"
 - `-t`, `--builtin-tool-timeout`: Set tool-call timeout in seconds (applies to tool executions, including shell backend and built-in tools). Overrides `builtin_tool_timeout` from `config.ini` for the current run.
 - `--rag <database>`: Load a RAG database for the session
 - `--skills-dir <dir>`: Additional skills directory (can be repeated to add multiple sources)
+- `--config-reset <option>`: Reset configuration to defaults (`all`, `system-prompt`, or `config-file`)
 
 ## Tasks
 
@@ -591,3 +595,7 @@ Interested in contributing? Great! Here’s how to get started.
 - `ollama_agent/vision/`: Screen vision and screenshot analysis.
 - `ollama_agent/streaming/`: Console output streaming, rendering, and non-interactive runner.
 - `ollama_agent/settings/`: Application configuration and centralized filesystem paths.
+
+## Contributors
+
+- [@cdavis-code](https://github.com/cdavis-code) — `/mcps` REPL command and MCP subagent tool visibility ([#46](https://github.com/arrase/ollama-agent/pull/46))

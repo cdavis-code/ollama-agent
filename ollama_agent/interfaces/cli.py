@@ -3,21 +3,20 @@
 import argparse
 import asyncio
 import inspect
-from typing import Callable
+from typing import Any, Callable, Coroutine
 
 from ..agent import OllamaAgent
 from ..core import ALLOWED_REASONING_EFFORTS
-from ..streaming import run_non_interactive
 from ..rag import RAGContext, RAGManager
 from ..settings import get_config
 from ..skills import SkillManager, SkillsContext
+from ..streaming import run_non_interactive
 from ..tasks.commands import CLIContext
 from .dispatch import build_cli_handlers
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("-m", "--model", type=str,
-                        help="Specify the AI model to use")
+    parser.add_argument("-m", "--model", type=str, help="Specify the AI model to use")
     parser.add_argument(
         "-p",
         "--prompt",
@@ -58,17 +57,17 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_task_subcommands(parser: argparse.ArgumentParser) -> None:
-    subparsers = parser.add_subparsers(
-        dest="command", help="Task management commands")
-    subparsers.add_parser("task-list", help="List all saved tasks").set_defaults(_handler="task-list")
+    subparsers = parser.add_subparsers(dest="command", help="Task management commands")
+    subparsers.add_parser("task-list", help="List all saved tasks").set_defaults(
+        _handler="task-list"
+    )
 
-    task_create_parser = subparsers.add_parser(
-        "task-create", help="Create a new task")
+    task_create_parser = subparsers.add_parser("task-create", help="Create a new task")
     task_create_parser.set_defaults(_handler="task-create")
+    task_create_parser.add_argument("task_id", type=str, help="Task ID (filename stem)")
     task_create_parser.add_argument(
-        "task_id", type=str, help="Task ID (filename stem)")
-    task_create_parser.add_argument(
-        "--title", type=str, required=True, help="Task title")
+        "--title", type=str, required=True, help="Task title"
+    )
     task_create_parser.add_argument(
         "--task-prompt",
         type=str,
@@ -96,62 +95,90 @@ def _add_task_subcommands(parser: argparse.ArgumentParser) -> None:
         help="Overwrite task if it already exists",
     )
 
-    task_run_parser = subparsers.add_parser(
-        "task-run", help="Execute a saved task")
+    task_run_parser = subparsers.add_parser("task-run", help="Execute a saved task")
     task_run_parser.set_defaults(_handler="task-run")
     task_run_parser.add_argument(
-        "task_id", type=str, help="Task ID or prefix to execute")
+        "task_id", type=str, help="Task ID or prefix to execute"
+    )
 
     task_delete_parser = subparsers.add_parser(
-        "task-delete", help="Delete a saved task")
+        "task-delete", help="Delete a saved task"
+    )
     task_delete_parser.set_defaults(_handler="task-delete")
     task_delete_parser.add_argument(
-        "task_id", type=str, help="Task ID or prefix to delete")
+        "task_id", type=str, help="Task ID or prefix to delete"
+    )
 
     # RAG subcommands
-    subparsers.add_parser("rag-list", help="List all RAG databases").set_defaults(_handler="rag-list")
+    subparsers.add_parser("rag-list", help="List all RAG databases").set_defaults(
+        _handler="rag-list"
+    )
 
     rag_create_parser = subparsers.add_parser(
-        "rag-create", help="Create a new RAG database")
+        "rag-create", help="Create a new RAG database"
+    )
     rag_create_parser.set_defaults(_handler="rag-create")
     rag_create_parser.add_argument(
-        "name", type=str, help="Name for the new RAG database")
+        "name", type=str, help="Name for the new RAG database"
+    )
 
     rag_delete_parser = subparsers.add_parser(
-        "rag-delete", help="Delete a RAG database")
+        "rag-delete", help="Delete a RAG database"
+    )
     rag_delete_parser.set_defaults(_handler="rag-delete")
     rag_delete_parser.add_argument(
-        "name", type=str, help="Name or prefix of the database to delete")
+        "name", type=str, help="Name or prefix of the database to delete"
+    )
 
     rag_add_parser = subparsers.add_parser(
-        "rag-add", help="Add file(s) to a RAG database")
+        "rag-add", help="Add file(s) to a RAG database"
+    )
     rag_add_parser.set_defaults(_handler="rag-add")
+    rag_add_parser.add_argument("database", type=str, help="Name of the RAG database")
+    rag_add_parser.add_argument("path", type=str, help="File or directory path to add")
     rag_add_parser.add_argument(
-        "database", type=str, help="Name of the RAG database")
-    rag_add_parser.add_argument(
-        "path", type=str, help="File or directory path to add")
-    rag_add_parser.add_argument(
-        "--dir", action="store_true",
-        help="Treat path as directory and add all files recursively")
+        "--dir",
+        action="store_true",
+        help="Treat path as directory and add all files recursively",
+    )
 
     # Skill subcommands
-    subparsers.add_parser("skill-list", help="List all skills").set_defaults(_handler="skill-list")
+    subparsers.add_parser("skill-list", help="List all skills").set_defaults(
+        _handler="skill-list"
+    )
 
     skill_show_parser = subparsers.add_parser("skill-show", help="Show skill details")
     skill_show_parser.set_defaults(_handler="skill-show")
     skill_show_parser.add_argument("skill_id", type=str, help="Skill ID or prefix")
 
-    skill_create_parser = subparsers.add_parser("skill-create", help="Create a new skill")
+    skill_create_parser = subparsers.add_parser(
+        "skill-create", help="Create a new skill"
+    )
     skill_create_parser.set_defaults(_handler="skill-create")
-    skill_create_parser.add_argument("skill_id", type=str, help="Skill ID (directory name)")
-    skill_create_parser.add_argument("--name", type=str, required=True, help="Skill name")
-    skill_create_parser.add_argument("--description", type=str, required=True, help="Skill description")
-    skill_create_parser.add_argument("--instructions", type=str, required=True, help="Skill instructions (markdown body)")
-    skill_create_parser.add_argument("--force", action="store_true", help="Overwrite skill if it already exists")
+    skill_create_parser.add_argument(
+        "skill_id", type=str, help="Skill ID (directory name)"
+    )
+    skill_create_parser.add_argument(
+        "--name", type=str, required=True, help="Skill name"
+    )
+    skill_create_parser.add_argument(
+        "--description", type=str, required=True, help="Skill description"
+    )
+    skill_create_parser.add_argument(
+        "--instructions",
+        type=str,
+        required=True,
+        help="Skill instructions (markdown body)",
+    )
+    skill_create_parser.add_argument(
+        "--force", action="store_true", help="Overwrite skill if it already exists"
+    )
 
     skill_delete_parser = subparsers.add_parser("skill-delete", help="Delete a skill")
     skill_delete_parser.set_defaults(_handler="skill-delete")
-    skill_delete_parser.add_argument("skill_id", type=str, help="Skill ID or prefix to delete")
+    skill_delete_parser.add_argument(
+        "skill_id", type=str, help="Skill ID or prefix to delete"
+    )
 
     # NOTE: Manual RAG query subcommand intentionally removed.
 
@@ -168,7 +195,9 @@ def create_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def handle_cli_commands(args: argparse.Namespace, agent_factory: Callable[..., OllamaAgent]) -> bool:
+def handle_cli_commands(
+    args: argparse.Namespace, agent_factory: Callable[..., OllamaAgent]
+) -> bool:
     """Handle CLI commands and return True if a command was handled."""
     ctx = CLIContext(agent_factory)
     cfg = get_config()
@@ -176,22 +205,25 @@ def handle_cli_commands(args: argparse.Namespace, agent_factory: Callable[..., O
     skills_ctx = SkillsContext(skill_manager=SkillManager())
 
     cmd = getattr(args, "_handler", None) or args.command
-    handlers = build_cli_handlers(args, task_ctx=ctx, rag_ctx=rag_ctx, skills_ctx=skills_ctx)
+    handlers = build_cli_handlers(
+        args, task_ctx=ctx, rag_ctx=rag_ctx, skills_ctx=skills_ctx
+    )
     if cmd in handlers:
         result = handlers[cmd]()
         if inspect.isawaitable(result):
-            asyncio.run(result)
+            asyncio.run(cast(Coroutine[Any, Any, None], result))
         return True
 
     if args.prompt:
-        agent = ctx.agent_factory(
-            model=args.model, reasoning_effort=args.effort)
+        agent = ctx.agent_factory(model=args.model, reasoning_effort=args.effort)
         # Load RAG database if specified
-        if getattr(args, 'rag', None):
+        if getattr(args, "rag", None):
             try:
                 agent.rag_manager.load_database(args.rag)
             except Exception as e:
-                rag_ctx.console.print(f"[red]Failed to load RAG database '{args.rag}': {e}[/red]")
+                rag_ctx.console.print(
+                    f"[red]Failed to load RAG database '{args.rag}': {e}[/red]"
+                )
                 raise SystemExit(1)
         asyncio.run(run_non_interactive(agent, args.prompt))
         return True

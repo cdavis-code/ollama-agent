@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, override
 
 import yaml
 
-from ..core import BaseFileStoreManager, DEFAULT_REASONING_EFFORT, ReasoningEffortValue, validate_reasoning_effort, validate_identifier
+from ..core import (
+    DEFAULT_REASONING_EFFORT,
+    BaseFileStoreManager,
+    ReasoningEffortValue,
+    validate_identifier,
+    validate_reasoning_effort,
+)
 from ..settings.paths import TASKS_DIR
 
 logger = logging.getLogger(__name__)
@@ -21,17 +28,21 @@ class Task:
     title: str
     prompt: str
     model: str
-    reasoning_effort: ReasoningEffortValue = field(
-        default=DEFAULT_REASONING_EFFORT)
+    reasoning_effort: ReasoningEffortValue = field(default=DEFAULT_REASONING_EFFORT)
 
     def __post_init__(self) -> None:
-        self.reasoning_effort = validate_reasoning_effort(
-            self.reasoning_effort)
+        self.reasoning_effort = validate_reasoning_effort(self.reasoning_effort)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Task:
-        return cls(str(d.get("title", "")), str(d.get("prompt", "")), str(d.get("model", "")),
-                   str(d.get("reasoning_effort", DEFAULT_REASONING_EFFORT)))
+    def from_dict(cls, d: dict[str, Any]) -> Task:
+        return cls(
+            str(d.get("title", "")),
+            str(d.get("prompt", "")),
+            str(d.get("model", "")),
+            validate_reasoning_effort(
+                str(d.get("reasoning_effort", DEFAULT_REASONING_EFFORT))
+            ),
+        )
 
 
 class TaskManager(BaseFileStoreManager["Task"]):
@@ -39,7 +50,7 @@ class TaskManager(BaseFileStoreManager["Task"]):
 
     DEFAULT_DIR = TASKS_DIR
 
-    _ext: str = ".yaml"     # tasks are stored as <id>.yaml files
+    _ext: str = ".yaml"  # tasks are stored as <id>.yaml files
     _id_label: str = "task_id"
 
     def __init__(self, tasks_dir: Path | None = None) -> None:
@@ -60,17 +71,23 @@ class TaskManager(BaseFileStoreManager["Task"]):
         path = self._path(task_id := self.validate_task_id(task_id))
         if path.exists() and not overwrite:
             raise FileExistsError(f"Task already exists: {task_id}")
-        path.write_text(yaml.safe_dump(
-            asdict(task), allow_unicode=True), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump(asdict(task), allow_unicode=True), encoding="utf-8"
+        )
         return task_id
 
+    @override
     def find_matches(self, prefix: str) -> list[tuple[str, Task]]:
         """Return all tasks whose id starts with prefix."""
         if not (prefix := (prefix or "").strip()):
             return []
         if (task := self.load(prefix)) is not None:  # Fast-path: exact match
             return [(prefix, task)]
-        return [(p.stem, t) for p in self.tasks_dir.glob(f"{prefix}*.yaml") if (t := self.load(p.stem))]
+        return [
+            (p.stem, t)
+            for p in self.tasks_dir.glob(f"{prefix}*.yaml")
+            if (t := self.load(p.stem))
+        ]
 
     def load(self, task_id: str) -> Task | None:
         """Load a task by ID."""
@@ -78,23 +95,30 @@ class TaskManager(BaseFileStoreManager["Task"]):
         if not path.exists():
             return None
         try:
-            return Task.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+            return Task.from_dict(
+                yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            )
         except Exception as e:
             logger.error("Error loading task %s: %s", task_id, e)
             return None
 
-    def delete(self, task_id: str) -> bool:
+    @override
+    def delete(self, resource_id: str) -> bool:
         """Delete a task by ID."""
         try:
-            self._path(task_id).unlink()
+            self._path(resource_id).unlink()
             return True
         except (FileNotFoundError, OSError) as e:
             if isinstance(e, OSError):
-                logger.error("Error deleting task %s: %s", task_id, e)
+                logger.error("Error deleting task %s: %s", resource_id, e)
             return False
 
+    @override
     def list_all(self) -> list[tuple[str, Task]]:
         """List all tasks sorted by title."""
-        tasks = [(p.stem, t) for p in self.tasks_dir.glob(
-            "*.yaml") if (t := self.load(p.stem))]
+        tasks = [
+            (p.stem, t)
+            for p in self.tasks_dir.glob("*.yaml")
+            if (t := self.load(p.stem))
+        ]
         return sorted(tasks, key=lambda x: x[1].title.lower())

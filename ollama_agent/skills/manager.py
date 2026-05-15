@@ -6,6 +6,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 
 import yaml
 
@@ -39,7 +40,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         meta = yaml.safe_load(text[3:end]) or {}
     except yaml.YAMLError:
         meta = {}
-    body = text[end + 3:].lstrip("\n")
+    body = text[end + 3 :].lstrip("\n")
     return (meta if isinstance(meta, dict) else {}), body
 
 
@@ -70,7 +71,7 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
 
     DEFAULT_DIR = SKILLS_DIR
 
-    _ext: str = ""          # skills are directories, no file extension
+    _ext: str = ""  # skills are directories, no file extension
     _id_label: str = "skill_id"
 
     def __init__(self, skills_dir: Path | None = None) -> None:
@@ -93,6 +94,7 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
             return None
         return _read_skill(d)
 
+    @override
     def find_matches(self, prefix: str) -> list[tuple[str, SkillInfo]]:
         """Return all skills whose id starts with *prefix*."""
         if not (prefix := (prefix or "").strip()):
@@ -105,6 +107,7 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
             if d.is_dir() and d.name.startswith(prefix) and (s := _read_skill(d))
         ]
 
+    @override
     def list_all(self) -> list[tuple[str, SkillInfo]]:
         """List all skills sorted by name."""
         skills = [
@@ -140,16 +143,17 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
         (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
         return skill_id
 
-    def delete(self, skill_id: str) -> bool:
+    @override
+    def delete(self, resource_id: str) -> bool:
         """Delete a skill directory entirely."""
-        skill_dir = self._path(skill_id)
+        skill_dir = self._path(resource_id)
         if not skill_dir.is_dir():
             return False
         try:
             shutil.rmtree(skill_dir)
             return True
         except OSError as exc:
-            logger.error("Error deleting skill %s: %s", skill_id, exc)
+            logger.error("Error deleting skill %s: %s", resource_id, exc)
             return False
 
     # ------------------------------------------------------------------
@@ -167,10 +171,14 @@ class SkillManager(BaseFileStoreManager["SkillInfo"]):
         Order: global (~/.ollama-agent/skills/) → project (CWD/skills/) → extra.
         DeepAgents uses *last wins* for skills with the same name, so later
         entries override earlier ones.
+
+        Paths are normalized to POSIX (forward-slash) form because
+        ``deepagents``' ``SkillsMiddleware`` uses ``PurePosixPath``
+        internally, which cannot parse Windows backslash paths.
         """
         candidates: list[Path] = [
             SKILLS_DIR,
             Path.cwd() / project_dir,
             *(Path(p) for p in extra),
         ]
-        return [str(p.resolve()) for p in candidates if p.is_dir()]
+        return [p.resolve().as_posix() for p in candidates if p.is_dir()]

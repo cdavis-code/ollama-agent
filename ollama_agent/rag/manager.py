@@ -6,6 +6,7 @@ import hashlib
 import logging
 import mimetypes
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from .settings import RAGSettings
 from ..core.common import validate_identifier
+from .settings import RAGSettings
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,16 @@ class RAGNotLoadedError(RAGError):
 
 class RAGDatabaseExistsError(RAGError):
     """Raised when attempting to create a database that already exists."""
+
+
+@dataclass
+class DirectoryAddResult:
+    """Result from adding a directory to a RAG database."""
+
+    added: int = 0
+    failed: int = 0
+    skipped: int = 0
+    files: list[dict[str, Any]] = field(default_factory=list)
 
 
 class RAGManager:
@@ -64,7 +75,9 @@ class RAGManager:
     def _ensure_loaded(self) -> QdrantClient:
         """Ensure a database is loaded and return the client."""
         if self._client is None or self._current_db is None:
-            raise RAGNotLoadedError("No RAG database loaded. Use /rag-load <name> first.")
+            raise RAGNotLoadedError(
+                "No RAG database loaded. Use /rag-load <name> first."
+            )
         return self._client
 
     def list_databases(self) -> list[dict[str, Any]]:
@@ -81,12 +94,14 @@ class RAGManager:
             except Exception:
                 # Not a valid RAG database (or unreadable)
                 continue
-            dbs.append({
-                "name": path.name,
-                "path": str(path),
-                "chunks": count,
-                "active": path.name == self._current_db,
-            })
+            dbs.append(
+                {
+                    "name": path.name,
+                    "path": str(path),
+                    "chunks": count,
+                    "active": path.name == self._current_db,
+                }
+            )
         return sorted(dbs, key=lambda x: x["name"])
 
     def create_database(self, name: str) -> str:
@@ -205,7 +220,9 @@ class RAGManager:
             "database": self._current_db,
         }
 
-    def add_directory(self, dir_path: str, extensions: list[str] | None = None) -> dict[str, Any]:
+    def add_directory(
+        self, dir_path: str, extensions: list[str] | None = None
+    ) -> DirectoryAddResult:
         """Add all files from a directory to the current RAG database."""
         path = Path(dir_path).expanduser().resolve()
 
@@ -217,26 +234,42 @@ class RAGManager:
 
         # Default extensions for text files
         if extensions is None:
-            extensions = [".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml",
-                          ".html", ".css", ".xml", ".csv", ".rst", ".ini", ".cfg", ".sh"]
+            extensions = [
+                ".txt",
+                ".md",
+                ".py",
+                ".js",
+                ".ts",
+                ".json",
+                ".yaml",
+                ".yml",
+                ".html",
+                ".css",
+                ".xml",
+                ".csv",
+                ".rst",
+                ".ini",
+                ".cfg",
+                ".sh",
+            ]
 
-        results = {"added": 0, "failed": 0, "skipped": 0, "files": []}
+        results = DirectoryAddResult()
 
         for file_path in path.rglob("*"):
             if not file_path.is_file():
                 continue
 
             if extensions and file_path.suffix.lower() not in extensions:
-                results["skipped"] += 1
+                results.skipped += 1
                 continue
 
             try:
                 result = self.add_file(str(file_path))
-                results["added"] += 1
-                results["files"].append(result)
+                results.added += 1
+                results.files.append(result)
             except RAGError as e:
                 logger.warning("Failed to add %s: %s", file_path, e)
-                results["failed"] += 1
+                results.failed += 1
 
         return results
 
@@ -305,14 +338,20 @@ class RAGManager:
 
     def _delete_source_points(self, client: QdrantClient, source: str) -> None:
         """Delete all points previously indexed for a given source path."""
-        filt = Filter(must=[FieldCondition(key="source", match=MatchValue(value=source))])
+        filt = Filter(
+            must=[FieldCondition(key="source", match=MatchValue(value=source))]
+        )
         try:
-            client.delete(collection_name=self.COLLECTION_NAME, points_selector=filt, wait=True)
+            client.delete(
+                collection_name=self.COLLECTION_NAME, points_selector=filt, wait=True
+            )
         except TypeError:
             # Older qdrant-client versions may not support wait=.
             client.delete(collection_name=self.COLLECTION_NAME, points_selector=filt)
         except Exception as e:
-            raise RAGError(f"Failed to delete existing points for source '{source}': {e}") from e
+            raise RAGError(
+                f"Failed to delete existing points for source '{source}': {e}"
+            ) from e
 
     def _chunk_text(self, text: str) -> list[str]:
         """Split text into overlapping chunks."""
@@ -335,7 +374,7 @@ class RAGManager:
                 for sep in ["\n\n", "\n", ". ", "! ", "? "]:
                     last_sep = chunk.rfind(sep)
                     if last_sep > chunk_size // 2:
-                        chunk = chunk[:last_sep + len(sep)]
+                        chunk = chunk[: last_sep + len(sep)]
                         end = start + len(chunk)
                         break
 
@@ -348,7 +387,9 @@ class RAGManager:
         """Read file content, handling different encodings."""
         # Check if it's a text file
         mime_type, _ = mimetypes.guess_type(str(path))
-        if mime_type and not mime_type.startswith(("text/", "application/json", "application/xml")):
+        if mime_type and not mime_type.startswith(
+            ("text/", "application/json", "application/xml")
+        ):
             raise RAGError(f"Unsupported file type: {mime_type}")
 
         for encoding in ["utf-8", "latin-1", "cp1252"]:

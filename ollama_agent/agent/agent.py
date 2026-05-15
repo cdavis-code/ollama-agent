@@ -19,14 +19,24 @@ from ..core import (
     final_text_from_state,
     validate_reasoning_effort,
 )
+from ..mcp import RunningMCPServer, cleanup_mcp_servers, initialize_mcp_servers
 from ..memory import Mem0Settings, MemoryManager
 from ..rag import RAGManager, RAGSettings
-from ..settings import RunningMCPServer, cleanup_mcp_servers, initialize_mcp_servers, load_instructions
-from .builtin_tools import BUILTIN_TOOLS, get_tool_timeout, set_memory_manager, set_rag_manager
+from ..settings import load_instructions
+from ..streaming.parsers import streaming_reasoning, streaming_text
+from ..vision import (
+    build_multimodal_responses_input,
+    capture_display_as_base64,
+    extract_display_tokens,
+)
+from .builtin_tools import (
+    BUILTIN_TOOLS,
+    get_tool_timeout,
+    set_memory_manager,
+    set_rag_manager,
+)
 from .middleware import stream_tool_events_mw
 from .session_manager import SessionManager
-from ..streaming.parsers import streaming_reasoning, streaming_text
-from ..vision import build_multimodal_responses_input, capture_display_as_base64, extract_display_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +56,14 @@ def _maybe_attach_screen_context(prompt: object) -> dict[str, Any]:
     return build_multimodal_responses_input(cleaned, images)[0]
 
 
-
 @dataclass(slots=True)
 class OllamaAgent:
     """AI agent backed by Ollama with tool support."""
 
     model: str
-    base_url: str = "http://localhost:11434"  # Kept configurable for local or remote Ollama hosts.
+    base_url: str = (
+        "http://localhost:11434"  # Kept configurable for local or remote Ollama hosts.
+    )
     api_key: str = "ollama"  # kept for config compatibility
     reasoning_effort: ReasoningEffortValue = "medium"
     context_window: int | None = None
@@ -118,13 +129,17 @@ class OllamaAgent:
         finally:
             await self.cleanup()
 
-    def _resolve(self, model: str | None, effort: str | None) -> tuple[str, ReasoningEffortValue]:
+    def _resolve(
+        self, model: str | None, effort: str | None
+    ) -> tuple[str, ReasoningEffortValue]:
         return (
             model or self.model,
             validate_reasoning_effort(effort) if effort else self.reasoning_effort,
         )
 
-    def _build_deep_agent(self, model: str, effort: ReasoningEffortValue) -> tuple[Any, list[str]]:
+    def _build_deep_agent(
+        self, model: str, effort: ReasoningEffortValue
+    ) -> tuple[Any, list[str]]:
         ensure_model_supports_tools(model, self.base_url)
 
         warnings: list[str] = []
@@ -144,14 +159,21 @@ class OllamaAgent:
             "subagents": [srv.subagent for srv in self._mcp_servers],
             # LocalShellBackend extends FilesystemBackend with an `execute` tool
             # that runs shell commands directly on the host.
-            "backend": LocalShellBackend(root_dir=Path.cwd(), timeout=int(get_tool_timeout()), virtual_mode=False),
+            "backend": LocalShellBackend(
+                root_dir=Path.cwd(), timeout=int(get_tool_timeout()), virtual_mode=False
+            ),
             "middleware": [stream_tool_events_mw],
         }
         if self.skills_dirs:
             kwargs["skills"] = list(self.skills_dirs)
         return create_deep_agent(**kwargs), warnings
 
-    async def run_async(self, prompt: object, model: str | None = None, reasoning_effort: str | None = None) -> str:
+    async def run_async(
+        self,
+        prompt: object,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> str:
         await self.initialize()
         m, e = self._resolve(model, reasoning_effort)
         agent, warnings = self._build_deep_agent(m, e)
@@ -161,7 +183,9 @@ class OllamaAgent:
         try:
             for warning in warnings:
                 logger.warning(warning)
-            state = await agent.ainvoke({"messages": [*history, _maybe_attach_screen_context(prompt)]})
+            state = await agent.ainvoke(
+                {"messages": [*history, _maybe_attach_screen_context(prompt)]}
+            )
             out = final_text_from_state(state)
             self._session_manager.append_message("assistant", out)
             return out
@@ -170,7 +194,10 @@ class OllamaAgent:
             return f"Error: {exc}"
 
     async def run_async_streamed(
-        self, prompt: object, model: str | None = None, reasoning_effort: str | None = None
+        self,
+        prompt: object,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         await self.initialize()
         m, e = self._resolve(model, reasoning_effort)
@@ -190,7 +217,6 @@ class OllamaAgent:
 
             async for mode, event in agent.astream(
                 {"messages": [*history, _maybe_attach_screen_context(prompt)]},
-
                 stream_mode=["messages", "custom", "values"],
             ):
                 if mode == "custom" and isinstance(event, dict) and event.get("type"):
@@ -202,8 +228,16 @@ class OllamaAgent:
                     last_state = event
                     if not emitted_from_messages:
                         messages = event.get("messages")
-                        current_messages = messages[history_len:] if isinstance(messages, list) else None
-                        current = assistant_text_from_messages(current_messages) if isinstance(current_messages, list) else ""
+                        current_messages = (
+                            messages[history_len:]
+                            if isinstance(messages, list)
+                            else None
+                        )
+                        current = (
+                            assistant_text_from_messages(current_messages)
+                            if isinstance(current_messages, list)
+                            else ""
+                        )
                         if current and current != emitted_text:
                             if current.startswith(emitted_text):
                                 delta = current[len(emitted_text) :]
@@ -219,7 +253,9 @@ class OllamaAgent:
                     chunk = event[0] if isinstance(event, tuple) and event else event
 
                     chunk_type = str(getattr(chunk, "type", "") or "").lower()
-                    chunk_name = getattr(chunk, "__class__", type(chunk)).__name__.lower()
+                    chunk_name = getattr(
+                        chunk, "__class__", type(chunk)
+                    ).__name__.lower()
                     if chunk_type == "tool" or "tool" in chunk_name:
                         continue
 
@@ -243,7 +279,9 @@ class OllamaAgent:
             final = emitted_text
             if last_state is not None and isinstance(last_state, dict):
                 messages = last_state.get("messages")
-                current_messages = messages[history_len:] if isinstance(messages, list) else None
+                current_messages = (
+                    messages[history_len:] if isinstance(messages, list) else None
+                )
                 if isinstance(current_messages, list) and current_messages:
                     final = assistant_text_from_messages(current_messages) or final
                 if not final:
